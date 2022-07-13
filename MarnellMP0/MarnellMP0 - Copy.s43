@@ -1,0 +1,191 @@
+;-------------------------------------------------------------------------------
+;   Example demo code for ECE 3362 Micrcontrollers class
+;   Provides simple example of Reading an ACTIVE LOW Pushbutton, enabling of
+;   internal Pullup resistors on a Port pin, use of subroutines, and definition
+;   of constants as well as SW controlled timing of activation of LEDs
+;   Generates different LED patterns depending on whether Pushbutton is pressed
+;   or not pressed - PB pressed will cause GRN LED to blink about twice per
+;   second, and PB not pressed will cause RED LED to toggle at a faster rate
+;      
+;
+;   Target: TI LaunchPad (MSP-EXP430GET version) development board with 
+;           MSP430G2553 device installed
+;
+;       Date:           July 16, 2012
+;       Last Revision:  1.1 (Sept 12, 2012 corrected typos in header)
+;                       1.2 Feb 4, 2013, added comments at bit test step
+;                       1.3 Sep 9, 2013, minor revisions in comments
+;                       1.4 Feb 5, 2016, removed some "junk" code from a class 
+;                           demo that had corrupted the original functionality
+;                       1.5 Jan 27, 2017, several changes in specific code 
+;                           details to use 0x0000 style vs 0000h style for 
+;                           hexadecimal numbers and a few other coding changes 
+;                           to improve clarity, also
+;                           changed IAR IDE tool from v 5.5 to v 6.5
+;                       1.6 July 10, 2019 revised for new version LaunchPad bd
+;                           (MSP-EXP430GET version), and updated comments to
+;                            reflect new Port pin assignments for LED's, and
+;                            updated for IAR IDE version 7.12
+;                       1.7 (Jan 30, 2020) updated some comments regarding LEDs
+;       Written by:     Dr. Michael Helm, ECE dept, Texas Tech University
+;       Adapted from:   TI example code, non-specific
+;       Assembler/IDE:  IAR Embedded Workbench 7.12 Kickstart version
+;
+;       HW I/O assignments:   based on LaunchPad board existing wiring
+;       P1.0    LED1    (Active HIGH)GRN
+;       P1.1    not used
+;       P1.2    not used
+;       P1.3    PushButton (Active LOW) (internal Pullup Enabled)
+;       P1.4    not used
+;       P1.5    not used
+;       P1.6    LED2    (Active HIGH)RED
+;       P1.7    not used
+;
+;       P2.0    not used
+;       P2.1    not used
+;       P2.2    not used
+;       P2.3    not used
+;       P2.4    not used
+;       P2.5    not used
+;       P2.6    not used
+;       P2.7    not used
+;
+;
+;-------------------------------------------------------------------------------
+#include  "msp430g2553.h"
+;-------------------------------------------------------------------------------
+; Definition of Constants
+;-------------------------------------------------------------------------------
+;note the first two constants use decimal notation
+LONG_DELAY      EQU     65535  ; max 16 bit value (0xFFFF)
+SHORT_DELAY     EQU     10000  ; 
+
+;note the 3 constants below use binary notation to improve
+;  clarity
+LED1GRN         EQU     %00000001 ; Port pin position P1.0
+LED2RED         EQU     %01000000 ; Port pin position P1.6
+
+PUSHBUTTON      EQU     %00001000 ; Port pin position P1.3
+
+;-------------------------------------------------------------------------------
+; Definition of Variables
+;-------------------------------------------------------------------------------
+                ORG  0x0200              ; start of RAM space
+; none used in this program
+;
+
+;-------------------------------------------------------------------------------
+            ORG     0xC000                  ; Program Reset (prog memory start)
+                                            ; this is Program memory start 
+                                            ; address for MSP430G2553 (16K)
+;-------------------------------------------------------------------------------
+; initialization
+RESET       mov.w   #0x0400,SP      ; Initialize stackpointer(to end of RAM +1)
+                                    ; RAM is 512 bytes, last position is 3FFh
+StopWDT     mov.w   #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT
+
+SetupP1     mov.b   #LED1GRN+LED2RED,&P1DIR ; P1.0, and P1.6 set as outputs
+                                            ; These are for the two LED's
+                                                                                         
+           ; The PushButton is wired to P1.3 (active LOW), so we need to turn
+           ; on the internal Pullup Resistor on P1.3 - this is done with P1REN
+           ; register
+           mov.b    #PUSHBUTTON, &P1REN    ;turn on the internal resistor
+           mov.b    #PUSHBUTTON, &P1OUT    ; set the resistor to Pullup mode
+
+           bis.b    #LED1GRN, &P1OUT   ; explicitly turn RED LED ON
+           bis.b    #LED2RED, &P1OUT   ; explicitly turn GRN LED ON
+
+;-------------------------------------------------------------------------------
+; start of main program (organized as a polling loop to read the pushbutton)           
+;-------------------------------------------------------------------------------
+             ; now start the continuous forever loop
+Mainloop    ;first read the state of the Pushbutton  (Active LOW)
+            bit.b   #PUSHBUTTON, &P1IN      ; check the state of P1.3
+            jne     ButtonNotPressed  ;(match) pin was HIGH (button NOT pressed)
+                ; NOTE:   the jump decision is based on state of ZERO flag
+                ;  in the Status Register (SR) after doing the bit test
+            ;jmp     ButtonPressed    ; no match, pin was LOW, button pressed 
+            
+ButtonPressed   
+            bic.b   #LED2RED, &P1OUT        ; turn off P1.3 - (LED2 - RED)
+            xor.b   #LED1GRN,&P1OUT       ; Toggle P1.0 (LED1 - GRN)
+            ; need a delay so we can actually see the LED blink
+            call #Delay_Long
+            ; long delay finished
+             jmp     Done
+             
+ButtonNotPressed   ; blink GREEN LED rapidly
+            bic.b   #LED1GRN, &P1OUT        ; turn off P1.0 - (LED1 - GRN)
+            bis.b   #LED2RED, &P1OUT       ; turn ON P1.6 (LED2 - RED)
+            call #Delay_Short
+            ; Short delay  finished
+            bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            call #Delay_Short
+            ; Short delay  finished
+            
+Done        jmp     Mainloop           ;  now repeat 
+                                       ; starting again at Mainloop
+;-------------------------------------------------------------------------------
+;           End of main code
+;-------------------------------------------------------------------------------                                            
+                                           
+;-------------------------------------------------------------------------------
+;           Subroutines
+;------------------------------------------------------------------------------- 
+
+;-------------------------------------------------------------------------------
+; Delay_Short
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - short delay
+;  uses: R15
+;-------------------------------------------------------------------------------
+Delay_Short
+    push R15   ;  save R15 since we use it here
+DelayTop
+    mov #SHORT_DELAY, R15  ;load loop counter (R15) with Short Delay constant
+Loop1
+    dec R15               ; decrement loop counter
+    jnz Loop1             ; Zero yet?, no decrement again
+
+    pop R15     ; restore R15 before returning
+    ret         ; return
+;-------------------------------------------------------------------------------
+;  end of Delay_Short
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Delay_Long
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - long delay
+;  uses: R15
+;-------------------------------------------------------------------------------
+Delay_Long
+    push R15     ; save R15 since we use it here
+DelayTopL
+    mov #LONG_DELAY, R15     ;load loop counter (R15) with Long Delay constant
+Loop1Long
+    dec R15                     ; decrement loop counter
+    jnz Loop1Long               ; Zero yet?, no decrement again
+
+    pop R15     ; restore R15 before returning
+    ret         ; return
+;-------------------------------------------------------------------------------
+;  end of Delay_Long
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           End of all Subroutines
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+            ORG     0xFFFE           ; MSP430 RESET Vector
+            DW      RESET            ; establishes the label RESET as 
+                                     ; the starting point
+            END                      ; END of all code for this program
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------

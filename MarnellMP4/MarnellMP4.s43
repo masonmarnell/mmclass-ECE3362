@@ -1,0 +1,399 @@
+;-------------------------------------------------------------------------------
+;       ECE 3362 Project 4
+;       
+;       This program reads the data from the temperature sensor and displays
+;       the least significant hex digit (taken from the raw reading of the
+;       sensor). I reused a lot of code from my P3 so it looks a bit messy.
+;       It is, however, completely functional.
+;      
+;
+;       Mason Marnell - Novembe16 5th, 2020 - Revision number 1.0
+;
+;       Company: ECE, Texas Tech University
+;
+;       Adapted from example code from Dr. M. Helm - 
+;       "DemoStopWatchFrameWork.s43" and "DemoWithADC10TempSensorPolling.s43"
+;
+;       Target: TI LaunchPad (MSP-EXP430GET version) development board with 
+;           MSP430G2553 device installed
+;
+;       Assembler/IDE:  IAR Embedded Workbench 7.12 Kickstart version
+;       HW I/O assignments:
+
+;
+;       P1.0    (output) LED1 LaunchPad bd (active high)
+;       P1.1    (input)  pushbutton (top) (active low) expansion bd
+;       P1.2    (input)  pushbutton (second from top) (active low) expansion bd
+;       P1.3    (input)  pushbutton on LaunchPad bd (active low)
+;       P1.4    (input) pushbutton (third from top) (active low) expansion bd
+;       P1.5    (input) pushbutton (bottom) (active low) expansion bd
+;       P1.6    (output) LED2 LaunchPad bd (active high)  
+;       P1.7    (not used)  
+;
+;       P2.0    (output) Segment A (active high) drives display board
+;       P2.1    (output) Segment B (active high) drives display board
+;       P2.2    (output) Segment C (active high) drives display board
+;       P2.3    (output) Segment D (active high) drives display board
+;       P2.4    (output) Segment E (active high) drives display board
+;       P2.5    (output) Segment F (active high) drives display board
+;       P2.6    (output) Segment G (active high) drives display board
+;       P2.7    (output) Segment DP (active high) drives display board
+;
+;
+;
+;*******************************************************************************
+#include  "msp430g2553.h"
+;-------------------------------------------------------------------------------
+; Definition of Constants
+;-------------------------------------------------------------------------------
+
+LONG_DELAY      EQU     65535  ; max 16 bit value (FFFFh)
+;LONG_DELAY      EQU     600  ; max 16 bit value (FFFFh)
+SHORT_DELAY     EQU     5000  ;
+
+;TIMER_A0_COUNT_1   EQU   2000    ; set count value for TimerA_0  
+TIMER_A0_COUNT_1   EQU   6000    ; set count value for TimerA_0
+;results in a 2 mS interrupt rate for updating each digit position in the
+; display based on 1 MHz SMCLK/1 and counting 2000 of the 1 uS clock events
+TIMER_A1_COUNT_1   EQU   50000    ; set count value for TimerA_1  
+; results in a 100 mS basic interrupt rate based on 1 MHz SMCLK/2
+; this will be a clock rate of one event per 2 uS, counting 50000 of those
+; results in one interrupt every 100 mS from this timer
+
+
+SEG_A         EQU     %00000001 ; Port pin position P2.0
+SEG_B         EQU     %00000010 ; Port pin position P2.1
+SEG_C         EQU     %00000100 ; Port pin position P2.2
+SEG_D         EQU     %00001000 ; Port pin position P2.3
+SEG_E         EQU     %00010000 ; Port pin position P2.4
+SEG_F         EQU     %00100000 ; Port pin position P2.5
+SEG_G         EQU     %01000000 ; Port pin position P2.6
+SEG_DP        EQU     %10000000 ; Port pin position P2.7
+
+
+PB_0         EQU     %00000010 ; Port pin position P1.1
+PB_1         EQU     %00000100 ; Port pin position P1.2  
+PB_2         EQU     %00010000 ; Port pin position P1.4  
+PB_3         EQU     %00100000 ; Port pin position P1.5
+PB_LPBD      EQU     %00001000 ; Port pin position P1.3 (on LaunchPad bd)
+
+
+
+SEG_PORT         EQU     P2OUT
+PB_PORT          EQU     P1IN
+
+
+ONE             EQU     %00000110
+TWO             EQU     %01011011
+THREE           EQU     %01001111
+FOUR            EQU     %01100110
+FIVE            EQU     %01101101
+SIX             EQU     %01111100
+SEVEN           EQU     %00000111
+EIGHT           EQU     %01111111
+NINE            EQU     %01100111
+ZERO            EQU     %00111111
+AA              EQU     %01110111 //10
+BB              EQU     %01111100 //11
+CC              EQU     %00111001 //12
+DD              EQU     %01011110 //13
+EE              EQU     %01111001 //14
+FF              EQU     %01110001 //15
+
+
+;-------------------------------------------------------------------------------
+; Definition of Variables
+;-------------------------------------------------------------------------------
+
+                ORG   0x0200     ; beginning of RAM space (necessary statement)
+
+Hundred_mS      DW  0      
+Ten_ms          DW  0
+CountMode       DW  0       ;Boolean flag, TRUE (1) when counting
+
+;-------------------------------------------------------------------------------
+            ORG     0xC000                  ; Program Reset (prog memory start)
+                                            ; this is Program memory start
+                                            ; address for MSP430G2553 (16K)
+;-------------------------------------------------------------------------------
+RESET       mov.w   #0x0400,SP        ; Initialize stackpointer(to end of RAM +1)
+                                     ; RAM is 512 bytes, last position is 3FFh
+                                     
+StopWDT     mov.w   #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT
+
+SetupP2              
+            mov.b   #0xFF, &P2DIR ; all as outputs to drive 7-seg LED
+                                                           
+           bic.b    #0xC0, &P2SEL   ; Clears the P2SEL bits so that
+                                        ; P2.6 and P2.7 function as GPIO pins
+                                       
+           mov.b    #0xBE, &P1REN    ;turn on the internal resistor for PB's
+                                     ; and all other "input" mode pins
+           mov.b    #0xBE, &P1OUT    ; set the resistors to Pullup mode                                        
+
+SetupCalibratedClock      
+; Set up the clock (calibrated mode at 1 MHz)
+; Get the calibrated data for the DCO clock
+; Set DCO to 1 MHz:  (this directly from TI Family Guide page283 and 284
+          CLR.B &DCOCTL ; Select lowest DCOx  and MODx settings
+          MOV.B &CALBC1_1MHZ,&BCSCTL1 ; Set range
+          MOV.B &CALDCO_1MHZ,&DCOCTL ; Set DCO step + modulation      
+       
+
+SetupTimerA0
+            ;these 3 lines of code sets up the first Timer, TimerA_0
+            ; note the difference in register names
+            ; this one is set up to provide the 2 mS intervals to update
+            ; the next digit of the multiplexed display
+            mov.w   #TIMER_A0_COUNT_1,&TA0CCR0 ;load a count value into the counter
+            mov.w   #CCIE,&TA0CCTL0        ; enable the timer interrupt
+
+            mov.w   #TASSEL_2+ID_0+MC_1,&TA0CTL   ; select SMCLK/1, up mode  
+     
+
+SetupTimerA1      
+            ;these 3 lines of code sets up the second Timer, TimerA_1
+            ; note the difference in register names  
+            ; this timer is set up to generate the 100 mS intervals for the
+            ; basic clock counting rate  (it has higher priority than TimerA_0
+            mov.w   #TIMER_A1_COUNT_1,&TA1CCR0 ;load a count value into the counter
+            mov.w   #CCIE,&TA1CCTL0        ; enable the timer interrupt
+
+            mov.w   #TASSEL_2+ID_1+MC_1,&TA1CTL   ; select SMCLK/2, up mode                
+     
+ClearRAMVariables  
+            clr.b   &CountMode
+            clr.b   &Hundred_mS
+            clr.b   &Ten_ms
+
+EnableGeneralInterrupts
+           bis.b #GIE,SR          ; enable the general interrupts bit       
+           mov.b #0, &Hundred_mS //sets to 0
+           
+           
+           
+mov #1, &CountMode //activates counting bit, artifact from p3 code
+
+;SetupADC10  mov.w   #ADC10SHT_2+ADC10ON,&ADC10CTL0 ; 16x sample and hold time, 
+                                                   ;turn ADC10 on
+SetupADC10  mov.w   #REFON+SREF_1+ADC10SHT_3+ADC10ON,&ADC10CTL0 ; 64x sample and hold time, 
+                                                   ;turn ADC10 on                                                   
+            ;;;mov.w   #INCH_10, &ADC10CTL1  ;set input channel to internal
+                                          ;temperature sensor
+            mov.w   #INCH_10+ADC10DIV_7, &ADC10CTL1  ;set input channel to internal
+                                          ;temperature sensor, divide clk by 8                                          
+            
+Mainloop    bis.w   #ENC+ADC10SC,&ADC10CTL0 ; Start sampling/conversion
+ 
+TestBusy    bit   #01h, &ADC10CTL1  ; check the ADC10BUSY bit (LSbit)
+
+            jne     TestBusy          ; if still Busy, keep checking
+            
+            mov.w &ADC10MEM, R4         ; store ADC result in R4
+            
+            jmp     Mainloop                ; Do it again
+
+
+/*
+ReadPort1    
+           ;10BB1BB0 positions
+
+           cmp.b #%10111100, &PB_PORT
+           jeq   Case_START
+                               
+           cmp.b #%10101110, &PB_PORT
+           jeq   Case_RESET 
+           
+          
+           cmp.b #%10011110, &PB_PORT
+           jeq   Case_STOP
+
+           jmp Done  ; no match  (no single button is pressed at this time)
+           
+           
+Case_START        
+           
+           mov #1, &CountMode //activates counting bit
+           jmp Done
+           
+Case_RESET
+           mov #0, &Hundred_mS
+           clr.b  &CountMode
+           jmp Done          
+         
+Case_STOP
+           clr.b  &CountMode //sets counting bit to 0
+           jmp Done  
+           
+Done
+           jmp ReadPort1
+
+
+*/
+;-------------------------------------------------------------------------------
+;           End of main code
+;-------------------------------------------------------------------------------                                            
+                                           
+;-------------------------------------------------------------------------------
+;           Subroutines
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; WriteNextDigitToDisplay
+;  passed in - DisplayValue, CurrentDigitPos
+;  returned - nothing
+;  accomplishes - Writes next digit to the expansion bd display
+;  uses: R15, global variable CurrentDigitPos, CurrentDigitValue
+; revisions:Mar 29,2018 corrected CurrentDigitPos operations (from word to byte)
+;-------------------------------------------------------------------------------
+WriteNextDigitToDisplay //modified the original function
+    push R15
+
+    mov.w R4, R15
+    and #0x000F, R15 //truncates the temp reading to the LS hex digit
+    add.w #SegPatternTable, R15
+    mov.b @R15, SEG_PORT
+    
+    //basically looks at pattern table and copies whatever number it is on
+    //to the seg port
+
+    pop R15     //restore
+    ret
+;-------------------------------------------------------------------------------
+;  end of WriteNextDigitToDisplay
+;-------------------------------------------------------------------------------
+
+
+;-------------------------------------------------------------------------------
+; Delay_Long
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - long delay
+;  uses: R15
+;-------------------------------------------------------------------------------
+Delay_Long
+    push R15     ; save R15 since we use it here
+DelayTopL
+    mov #LONG_DELAY, R15     ;load loop counter (R15) with Long Delay constant
+Loop1Long
+    dec R15                     ; decrement loop counter
+    jnz Loop1Long               ; Zero yet?, no decrement again
+
+    pop R15     ; restore R15 before returning
+    ret         ; return
+;-------------------------------------------------------------------------------
+;  end of Delay_Long
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           End of all Subroutines
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;          Interrupt Service Routines
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
+; Interrupt Service Routine for Timer_A 1
+;  Passed in: nothing
+;  Activated every time TimerA_1 times out
+;  Uses: updates global variable Hundred_mS
+;  For this example, set up to trigger every 100 mS
+;-------------------------------------------------------------------------------
+
+TA1_ISR
+      cmp #1, &CountMode //checks if counting should be activated
+      jz  Check1
+      reti              
+
+Check1      
+      inc &Ten_ms
+      cmp #10, &Ten_ms
+      jz Check2
+      reti
+     
+Check2
+      clr &Ten_ms
+      inc &Hundred_mS //increments counter by 1
+      cmp #10, &Hundred_mS
+      jz Recycle
+      reti
+
+Recycle
+       mov #0, &Hundred_mS
+       call #WriteNextDigitToDisplay
+       reti
+
+;-------------------------------------------------------------------------------
+;  end of TA0_ISR   Timer_A 0 Interrupt Service Routine
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Interrupt Service Routine for Timer_A 0
+;  Passed in: nothing
+;  Activated every time TimerA_0 times out
+;  Used to update the next digit of the multiplexed display
+;  Uses: nothing
+;  For this example, set up to trigger every 2 mS, results in a total display
+;  update every 8 mS with no flicker
+;-------------------------------------------------------------------------------
+
+TA0_ISR
+
+     // call #WriteNextDigitToDisplay
+
+      reti    ; return from interrupt
+
+;-------------------------------------------------------------------------------
+;  end of TA0_ISR   Timer_A 0 Interrupt Service Routine
+;-------------------------------------------------------------------------------
+
+
+;-------------------------------------------------------------------------------
+;           Definition of Program Data Memory
+;-------------------------------------------------------------------------------
+            ORG   0xE000   ; this line not strictly necessary, but does force
+                            ; the location of this program memory data - this is
+                            ; a matter of convenience  - need to leave enough
+                            ; space ahead of Interrupt Vectors for the data that
+                            ; we are putting here
+
+; usage: use SegPatternTable as base address, then offset into table for
+; a specific 7-seg number (pattern) to display
+SegPatternTable  ; contains patterns for each 7-seg number
+     DB  ZERO
+     DB  ONE
+     DB  TWO
+     DB  THREE
+     DB  FOUR
+     DB  FIVE
+     DB  SIX
+     DB  SEVEN
+     DB  EIGHT
+     DB  NINE
+     DB  AA
+     DB  BB
+     DB  CC
+     DB  DD //added the hex digits to the pattern table
+     DB  EE
+     DB  FF
+     
+     
+
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+
+            ORG     0xFFFE                  ; MSP430 RESET Vector
+            DW      RESET                   ; establishes the label RESET as
+           
+            ORG     0xFFFA                  ;TimerA_1 Vector
+            DW      TA1_ISR                 ;TimerA_1 Interrupt Service Routine
+           
+            ORG     0xFFF2                  ;TimerA_0 Vector
+            DW      TA0_ISR                 ;TimerA_0 Interrupt Service Routine
+           
+
+                                            ; the starting point
+            END                             ; END of all code for this program
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------

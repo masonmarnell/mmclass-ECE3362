@@ -1,0 +1,91 @@
+;-------------------------------------------------------------------------------
+;  Simple LED blinker program example for ECE 3362 Microcontrollers class at TTU
+;    This program will blink the GRN LED on the TI LaunchPad board.
+;    This is accomplished by explicity changing the state of one bit  
+;    of PORT 1 at a periodic rate controlled by a SW based countdown timing loop
+;
+;   Purpose:  This program is an example of about the simplist Assembly Language 
+;    program possible that actually does something observable to the outside 
+;    world (in this case blinking the LED connected to PORT 1.0 - PORT 1 pin 0)
+;      There is a simpler solution, involving XOR operation, but this one is 
+;      probably a better example to learn from
+;
+;   Target: TI LaunchPad (MSP-EXP430GET version) development board with 
+;           MSP430G2553 device installed
+;
+;       Date:           Aug 26, 2013
+;       Last Revision:  1.0
+;                       1.1  Jan 27, 2017 changed hexadecimal formatting from
+;                        0000h style to 0x0000 style
+;                       1.2 Sept 5, 2018 - revised to use bis.b and bic.b 
+;                        instructions rather than xor.b, updated IDE rev to 6.5
+;                       1.3 Jan 28, 2019 revised for new version LaunchPad bd
+;                           (MSP-EXP430GET version), and updated comments to
+;                            reflect new Port pin assignments for LED's, and
+;                            updated for IAR IDE version 7.12
+;                       1.4  July 10, 2019 - updated target comment above and
+;                            changed description from RED LED to GRN LED
+;       Written by:     Dr. Michael Helm, ECE dept, Texas Tech University
+;       Adapted from:   TI example code, ;   D. Dang, December 2010
+;       Assembler/IDE:  IAR Embedded Workbench 7.12
+;
+;       HW I/O assignments: (hardwired on LaunchPad board)
+;       P1.0    LED1    (Active HIGH)GRN on new version LaunchPad board
+;       P1.1    not used
+;       P1.2    not used
+;       P1.3    PushButton (Active LOW) (internal Pullup Enabled)
+;       P1.4    not used
+;       P1.5    not used
+;       P1.6    LED2    (Active HIGH)RED on new version LaunchPad board
+;       P1.7    not used
+;
+;       P2.0    not used
+;       P2.1    not used
+;       P2.2    not used
+;       P2.3    not used
+;       P2.4    not used
+;       P2.5    not used
+;       P2.6    not used
+;       P2.7    not used
+;
+;-------------------------------------------------------------------------------
+#include  "msp430g2553.h"   ; these are standard name definitions
+;-------------------------------------------------------------------------------
+            ORG     0xC000                  ; Program Space start address
+;-------------------------------------------------------------------------------
+; necessary initialization
+RESET       mov.w   #0x0400,SP               ; Initialize stackpointer to bottom
+                                                                          ; of RAM space
+StopWDT     mov.w   #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT (Watchdog Timer)
+; set up PORT 1 to have OUTPUT mode for RED LED pin position
+SetupP1     mov.b   #0x01,&P1DIR            ; P1.0 (position of GRN LED is 
+                                            ; set to have an OUTPUT direction
+                                            ; (default is always INPUT)
+;main program
+MainLoop    
+TurnLEDDON   bis.b   #0x01,&P1OUT          ; Set P1.0 to HIGH (turns ON GRN LED)
+
+LoadDelayA   mov.w   #65535,R15             ; Delay count loaded into R15
+
+; SW based delay timing loop               ;uses R15 as temporary variable
+LoopTopA     dec.w   R15                     ; Decrement R15
+            jnz     LoopTopA                 ; Have we hit zero yet?, no
+;now that ON delay is finished, turn the LED OFF            
+TurnLEDOFF  bic.b   #0x01,&P1OUT      ; Clear P1.0 to LOW (turns OFF GRN LED)
+
+LoadDelayB   mov.w   #65535,R15             ; Delay count loaded into R15
+
+; SW based delay timing loop               ;uses R15 as temporary variable
+LoopTopB     dec.w   R15                    ; Decrement R15
+            jnz     LoopTopB                ; Have we hit zero yet?, no            
+;now that OFF delay is finished, go back to top of loop and repeat            
+;Done with one sequence, now repeat forever            
+            jmp     MainLoop                ; Repeat the main loop forever
+                                            ;
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+            ORG     0xFFFE                  ; MSP430 RESET Vector table entry
+            DW      RESET                   ; address of instruction to load
+                                                         ; when reset occurs       
+             END                                  ; end of program                                                    

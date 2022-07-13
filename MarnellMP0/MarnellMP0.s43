@@ -1,0 +1,188 @@
+;-------------------------------------------------------------------------------
+;
+;       ECE 3362 Project 0
+;       When the code starts, the LED lights are both off. When the push button
+;       is pressed, the red LED blinks 5 times, with 1/4 second pauses in
+;       between, then waits a half second. The green LED then blinks 4 times
+;       with  a 1/4 second in between each blink, and afterwards the board
+;       reverts back to an idle state, ready for the user to press the button
+;       and start the sequence of blinks over again. The number of the red
+;       blinks corresponds to the ones place of my unique number, while the
+;       green blinks correspond to the tens place. My unique number is 45.
+;
+;       Mason Marnell - September 16th, 2020 - Revision number 1.0
+;
+;       Company: ECE, Texas Tech University
+;
+;       Adapted from example code from Dr. M. Helm - "Example demo code for
+;       ECE 3362 Micrcontrollers class."
+;
+;       Target: TI LaunchPad (MSP-EXP430GET version) development board with 
+;           MSP430G2553 device installed
+;
+;       Assembler/IDE:  IAR Embedded Workbench 7.12 Kickstart version
+;
+;       HW I/O assignments:   based on LaunchPad board existing wiring
+;       P1.0    LED1    (Active HIGH)GRN
+;       P1.1    not used
+;       P1.2    not used
+;       P1.3    PushButton (Active LOW) (internal Pullup Enabled)
+;       P1.4    not used
+;       P1.5    not used
+;       P1.6    LED2    (Active HIGH)RED
+;       P1.7    not used
+;
+;       P2.0    not used
+;       P2.1    not used
+;       P2.2    not used
+;       P2.3    not used
+;       P2.4    not used
+;       P2.5    not used
+;       P2.6    not used
+;       P2.7    not used
+;
+;-------------------------------------------------------------------------------
+
+#include  "msp430g2553.h"
+;-------------------------------------------------------------------------------
+; Definition of Constants
+;-------------------------------------------------------------------------------
+;note the first two constants use decimal notation
+LONG_DELAY      EQU     65535  ; max 16 bit value (0xFFFF) 
+
+;note the 3 constants below use binary notation to improve
+;  clarity
+LED1GRN         EQU     %00000001 ; Port pin position P1.0
+LED2RED         EQU     %01000000 ; Port pin position P1.6
+
+PUSHBUTTON      EQU     %00001000 ; Port pin position P1.3
+
+;-------------------------------------------------------------------------------
+; Definition of Variables
+;-------------------------------------------------------------------------------
+                ORG  0x0200              ; start of RAM space
+; none used in this program
+;
+
+;-------------------------------------------------------------------------------
+            ORG     0xC000                  ; Program Reset (prog memory start)
+                                            ; this is Program memory start 
+                                            ; address for MSP430G2553 (16K)
+;-------------------------------------------------------------------------------
+; initialization
+RESET       mov.w   #0x0400,SP      ; Initialize stackpointer(to end of RAM +1)
+                                    ; RAM is 512 bytes, last position is 3FFh
+StopWDT     mov.w   #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT
+
+SetupP1     mov.b   #LED1GRN+LED2RED,&P1DIR ; P1.0, and P1.6 set as outputs
+                                            ; These are for the two LED's
+                                                                                         
+           ; The PushButton is wired to P1.3 (active LOW), so we need to turn
+           ; on the internal Pullup Resistor on P1.3 - this is done with P1REN
+           ; register
+           mov.b    #PUSHBUTTON, &P1REN    ;turn on the internal resistor
+           mov.b    #PUSHBUTTON, &P1OUT    ; set the resistor to Pullup mode
+
+;-------------------------------------------------------------------------------
+; start of main program (organized as a polling loop to read the pushbutton)           
+;-------------------------------------------------------------------------------
+             ; now start the continuous forever loop
+Mainloop    ;first read the state of the Pushbutton  (Active LOW)
+            bit.b   #PUSHBUTTON, &P1IN      ; check the state of P1.3
+            jne     ButtonNotPressed  ;(match) pin was HIGH (button NOT pressed)
+                ; NOTE:   the jump decision is based on state of ZERO flag
+                ;  in the Status Register (SR) after doing the bit test
+            ;jmp     ButtonPressed    ; no match, pin was LOW, button pressed 
+   
+ButtonPressed   
+            
+            bic.b   #LED2RED, &P1OUT        ; turn off P1.3 - (LED2 - RED)
+            call #Delay_Long
+             bis.b    #LED2RED, &P1OUT   ; explicitly turn RED LED ON
+            call #Delay_Long
+             bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            call #Delay_Long
+             bis.b    #LED2RED, &P1OUT   ; explicitly turn RED LED ON
+            call #Delay_Long
+             bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            call #Delay_Long
+             bis.b    #LED2RED, &P1OUT   ; explicitly turn RED LED ON
+            call #Delay_Long
+             bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            call #Delay_Long
+             bis.b    #LED2RED, &P1OUT   ; explicitly turn RED LED ON
+            call #Delay_Long
+             bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            call #Delay_Long
+             bis.b    #LED2RED, &P1OUT   ; explicitly turn RED LED ON
+            call #Delay_Long
+             bic.b   #LED2RED, &P1OUT     ; turn OFF P1.6 (LED2 - RED)
+            
+            call #Delay_Long
+    
+            call #Delay_Long
+             bis.b    #LED1GRN, &P1OUT  ;turn on green LED
+            call #Delay_Long
+             bic.b    #LED1GRN, &P1OUT  ;turn off green LED
+            call #Delay_Long
+             bis.b    #LED1GRN, &P1OUT  ;turn on green LED
+            call #Delay_Long
+             bic.b    #LED1GRN, &P1OUT  ;turn off green LED
+            call #Delay_Long
+             bis.b    #LED1GRN, &P1OUT
+            call #Delay_Long
+             bic.b    #LED1GRN, &P1OUT
+            call #Delay_Long
+             bis.b    #LED1GRN, &P1OUT
+            call #Delay_Long
+             bic.b    #LED1GRN, &P1OUT
+            
+            ; long delay finished
+             jmp     Done
+             
+ButtonNotPressed   ; unused
+            
+Done        jmp     Mainloop           ;  now repeat 
+                                       ; starting again at Mainloop
+;-------------------------------------------------------------------------------
+;           End of main code
+;-------------------------------------------------------------------------------                                            
+                                           
+;-------------------------------------------------------------------------------
+;           Subroutines
+;------------------------------------------------------------------------------- 
+
+;-------------------------------------------------------------------------------
+; Delay_Long
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - long delay
+;  uses: R15
+;-------------------------------------------------------------------------------
+Delay_Long
+    push R15     ; save R15 since we use it here
+DelayTopL
+    mov #LONG_DELAY, R15     ;load loop counter (R15) with Long Delay constant
+Loop1Long
+    dec R15                     ; decrement loop counter
+    jnz Loop1Long               ; Zero yet?, no decrement again
+
+    pop R15     ; restore R15 before returning
+    ret         ; return
+;-------------------------------------------------------------------------------
+;  end of Delay_Long
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           End of all Subroutines
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+            ORG     0xFFFE           ; MSP430 RESET Vector
+            DW      RESET            ; establishes the label RESET as 
+                                     ; the starting point
+            END                      ; END of all code for this program
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
